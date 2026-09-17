@@ -3396,6 +3396,12 @@ function proximoNumero(tipo, cb){
    ===================================================================== */
 var IX = { vehId:{}, vehInt:{}, vehPat:{}, empId:{}, empCod:{}, condId:{}, condDni:{}, persLeg:{} };
 function indexar(){
+  /* Filas pegadas a mano en la planilla vienen sin "id". Sin id, editar se tomaba
+     como "registro nuevo" y duplicaba la fila. Acá se les da un id apenas llegan;
+     queda escrito en la planilla la próxima vez que se guarda esa hoja. */
+  Object.keys(S.db||{}).forEach(function(h){
+    (S.db[h]||[]).forEach(function(r){ if(r && typeof r==='object' && !r.id) r.id = idNuevo(); });
+  });
   IX = { vehId:{}, vehInt:{}, vehPat:{}, empId:{}, empCod:{}, condId:{}, condDni:{}, persLeg:{} };
   T('Vehiculos').forEach(function(v){
     if(v.id) IX.vehId[String(v.id)] = v;
@@ -3653,7 +3659,7 @@ function itemNav(id){
 /* --------- marca: todo editable, nada atado a ninguna empresa --------- */
 var MARCA_DEF = { nombre:'Gestión de Flota', bajada:'', acento:'#2b3440' };
 /* Subila cada vez que cambie algo. Se ve arriba a la derecha y en el login. */
-var GF_VERSION = 'v3.5 · 16-09-2026';
+var GF_VERSION = 'v3.5.1 · 17-09-2026';
 function marcaNombre(){ return (localStorage.getItem('GF_MARCA_NOMBRE')||'').trim() || MARCA_DEF.nombre; }
 function marcaBajada(){ return (localStorage.getItem('GF_MARCA_BAJADA')||'').trim(); }
 function acento(){ return localStorage.getItem(LS.acento) || MARCA_DEF.acento; }
