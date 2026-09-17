@@ -166,6 +166,7 @@ textarea{min-height:64px;resize:vertical}
 .doc .cre b{display:block;font-size:13px}
 .doc .cre span{font-size:11.5px;color:var(--t3)}
 @media(max-width:700px){.marca{width:auto;padding-left:0}.marca span{display:none}main{padding:14px 12px 60px}}
+.aviso-candado{background:var(--alerta-bg);color:var(--alerta);border-radius:10px;padding:10px 14px;margin-bottom:12px;font-size:13px}
 .avisito{position:fixed;bottom:22px;left:50%;transform:translateX(-50%);background:var(--t1,#1f2328);color:#fff;padding:10px 16px;border-radius:10px;font-size:13px;font-weight:600;box-shadow:0 8px 24px rgba(0,0,0,.25);z-index:9999;max-width:92vw;text-align:center}
 </style>
 </head>
@@ -3677,7 +3678,7 @@ function itemNav(id){
 /* --------- marca: todo editable, nada atado a ninguna empresa --------- */
 var MARCA_DEF = { nombre:'Gestión de Flota', bajada:'', acento:'#2b3440' };
 /* Subila cada vez que cambie algo. Se ve arriba a la derecha y en el login. */
-var GF_VERSION = 'v3.5.2 · 17-09-2026';
+var GF_VERSION = 'v3.6 · 17-09-2026';
 function marcaNombre(){ return (localStorage.getItem('GF_MARCA_NOMBRE')||'').trim() || MARCA_DEF.nombre; }
 function marcaBajada(){ return (localStorage.getItem('GF_MARCA_BAJADA')||'').trim(); }
 function acento(){ return localStorage.getItem(LS.acento) || MARCA_DEF.acento; }
@@ -4416,8 +4417,12 @@ function vistaOT(m){
   var barra = el('div',{style:'display:grid;grid-template-columns:1fr auto auto;gap:10px;margin-bottom:12px'});
   var busca = el('input',{placeholder:'buscar por N° de O.T., interno o falla…', value:S.buscar||''});
   busca.addEventListener('input', function(e){ S.buscar=e.target.value; dib(); });
-  var selE = el('select'); selE.appendChild(el('option',{value:''},'Todos los estados'));
-  ((S.listas||{}).estado_ot||[]).forEach(function(x){ var o=el('option',{value:x},esc(x)); if(S.filtroEstado===x)o.selected=true; selE.appendChild(o); });
+  if(S.filtroEstado===undefined) S.filtroEstado = '__abiertas';   /* de fábrica: solo las que están en curso */
+  var selE = el('select');
+  selE.appendChild(el('option',{value:'__abiertas'},'Solo abiertas (sin cerrar)'));
+  selE.appendChild(el('option',{value:''},'Todos los estados'));
+  ((S.listas||{}).estado_ot||[]).forEach(function(x){ var o=el('option',{value:x},esc(x)); selE.appendChild(o); });
+  selE.value = S.filtroEstado || '';
   selE.addEventListener('change', function(e){ S.filtroEstado=e.target.value; dib(); });
   var selC = el('select'); selC.appendChild(el('option',{value:''},'Todas las clases'));
   ((S.listas||{}).clase_ot||[]).forEach(function(x){ var o=el('option',{value:x},esc(x)); if(S.filtroClase===x)o.selected=true; selC.appendChild(o); });
@@ -4428,7 +4433,8 @@ function vistaOT(m){
   var dib = function(){
     var q = normTexto(S.buscar||'');
     var f = ots.filter(function(o){
-      if(S.filtroEstado && o.estado!==S.filtroEstado) return false;
+      if(S.filtroEstado==='__abiertas'){ if(o.estado==='Cerrada'||o.estado==='Anulada') return false; }
+      else if(S.filtroEstado && o.estado!==S.filtroEstado) return false;
       if(S.filtroClase && o.clase!==S.filtroClase) return false;
       if(!q) return true;
       return normTexto([o.numero,o.interno,o.patente,o.falla,o.responsable].join(' ')).indexOf(q)>=0;
@@ -5410,7 +5416,7 @@ function vistaVehiculos(m){
     var dib = function(){
       var q = normTexto(S.buscar||'');
       var filas = porEmpresa(T('Vehiculos')).filter(function(v){
-        if(S.filtroEstado && v.estado!==S.filtroEstado) return false;
+        if(S.filtroEstado && S.filtroEstado!=='__abiertas' && v.estado!==S.filtroEstado) return false;
         if(!q) return true;
         return normTexto([v.vehiculo,v.patente,v.marca,v.modelo,v.base].join(' ')).indexOf(q)>=0;
       }).map(function(v){
@@ -6369,14 +6375,22 @@ function fichaOT(o){
     '</tbody></table>';
   cuerpo.appendChild(d);
 
+  /* Una O.T. cerrada o anulada queda CON CANDADO: se mira, no se toca.
+     Para corregir algo hay que reabrirla (botón abajo), y queda registrado. */
+  var cerrada = (o.estado==='Cerrada' || o.estado==='Anulada');
+  if(cerrada){
+    cuerpo.appendChild(el('div',{cls:'aviso-candado'},
+      '🔒 <b>O.T. '+esc(o.estado.toLowerCase())+'</b>'+(o.fecha_cierre? ' el '+esc(fecha(o.fecha_cierre)):'')+(o.cerrada_por? ' por '+esc(o.cerrada_por):'')+
+      '. No se le puede agregar nada. Si hay que corregirla, usá <b>Reabrir O.T.</b>'));
+  }
   var seccion = function(titulo, hoja, cols, base){
     var c = el('div',{style:'margin-bottom:14px'});
     var h = el('div',{style:'display:flex;align-items:center;gap:8px;margin-bottom:6px'});
     h.appendChild(el('b',null, esc(titulo)));
     h.appendChild(el('div',{style:'flex:1'}));
-    h.appendChild(el('button',{cls:'btn chico', onclick:function(){ formGenerico(hoja, base(), function(){ fichaOT(otPorNumero(o.numero)); }); }},'+ Agregar'));
+    if(!cerrada) h.appendChild(el('button',{cls:'btn chico', onclick:function(){ formGenerico(hoja, base(), function(){ fichaOT(otPorNumero(o.numero)); }); }},'+ Agregar'));
     c.appendChild(h);
-    c.appendChild(tabla(T(hoja).filter(function(x){ return x.ot===o.numero; }), cols, function(f){ formGenerico(hoja, f, function(){ fichaOT(otPorNumero(o.numero)); }); }));
+    c.appendChild(tabla(T(hoja).filter(function(x){ return x.ot===o.numero; }), cols, cerrada ? null : function(f){ formGenerico(hoja, f, function(){ fichaOT(otPorNumero(o.numero)); }); }));
     return c;
   };
   cuerpo.appendChild(seccion('Tareas','OT_Tareas',
@@ -6392,11 +6406,17 @@ function fichaOT(o){
     [['proveedor','Proveedor','b'],['descripcion','Trabajo'],['comprobante','Comprobante'],['importe','Importe','$']],
     function(){ return { ot:o.numero, fecha:hoy(), moneda:'ARS' }; }));
 
-  var bots = [
-    el('button',{cls:'btn', onclick:function(){ abrirVale(o); }},'Vale de consumo'),
-    el('button',{cls:'btn', onclick:function(){ formGenerico('OT', o, function(){ fichaOT(otPorNumero(o.numero)); }); }},'Editar cabecera'),
-    el('button',{cls:'btn pri', onclick:function(){ recalcularOT(o.numero, true); }}, o.estado==='Cerrada'?'Recalcular costos':'Recalcular y cerrar')
-  ];
+  var bots = [];
+  if(cerrada){
+    if(puede(S.vista,'cargar')) bots.push(el('button',{cls:'btn', onclick:function(){ reabrirOT(o.numero); }},'Reabrir O.T.'));
+  } else {
+    bots.push(el('button',{cls:'btn', onclick:function(){ abrirVale(o); }},'Vale de consumo'));
+    bots.push(el('button',{cls:'btn', onclick:function(){ formGenerico('OT', o, function(){ fichaOT(otPorNumero(o.numero)); }); }},'Editar cabecera'));
+    if(o.estado==='Abierta' || o.estado==='Borrador')
+      bots.push(el('button',{cls:'btn', onclick:function(){ cambiarEstadoOT(o.numero, 'En ejecución'); }},'▶ Iniciar'));
+    bots.push(el('button',{cls:'btn', onclick:function(){ recalcularOT(o.numero, false); }},'Recalcular costos'));
+    bots.push(el('button',{cls:'btn pri', onclick:function(){ recalcularOT(o.numero, true); }},'✔ Cerrar O.T.'));
+  }
   modal('O.T. '+o.numero, cuerpo, bots, 'ancho');
 }
 function fila2(a,b){ return '<tr><td style="width:190px;color:var(--t3)">'+esc(a)+'</td><td><b>'+b+'</b></td></tr>'; }
@@ -6407,13 +6427,35 @@ function recalcularOT(numero, cerrar){
   var t = totalesOT(numero);
   o.costo_mo = t.mo; o.costo_materiales = t.ma; o.costo_terceros = t.te; o.costo_total = t.total;
   if(cerrar && o.estado!=='Cerrada'){
-    if(!t.mo && !confirm('Esta O.T. no tiene horas de mano de obra cargadas. Sin horas el costo por km miente.\n\n¿La cerramos igual?')) return;
+    var pend = T('OT_Tareas').filter(function(x){ return x.ot===numero && !/hecha|cancelad/i.test(String(x.estado||'')); });
+    var avisos = [];
+    if(pend.length) avisos.push('· Tiene '+pend.length+' tarea(s) sin marcar como hecha.');
+    if(!t.mo) avisos.push('· No tiene horas de mano de obra cargadas (sin horas el costo por km miente).');
+    if(!String(o.trabajo||'').trim()) avisos.push('· No dice qué trabajo se hizo (campo "Trabajo realizado").');
+    if(avisos.length && !confirm('Antes de cerrar la O.T. '+numero+':\n\n'+avisos.join('\n')+'\n\n¿La cerramos igual?')) return;
+    if(!avisos.length && !confirm('¿Cerrar la O.T. '+numero+'? Después queda con candado: se puede mirar pero no cargar.')) return;
     o.estado = 'Cerrada'; o.fecha_cierre = hoy(); o.cerrada_por = S.usuario? S.usuario.nombre : '';
     if(!o.fecha_fin) o.fecha_fin = hoy();
     var v = unidad(o.interno); if(v && v.estado==='En taller'){ v.estado='Operativa'; guardarFila('Vehiculos', v); }
   }
   guardarFila('OT', o);
-  guardar(['OT','Vehiculos'], function(){ fichaOT(otPorNumero(numero)); });
+  guardar(['OT','Vehiculos'], function(){ aviso(cerrar && o.estado==='Cerrada' ? 'O.T. '+numero+' cerrada' : 'Costos recalculados'); fichaOT(otPorNumero(numero)); });
+}
+function cambiarEstadoOT(numero, estado){
+  var o = otPorNumero(numero); if(!o) return;
+  o.estado = estado;
+  if(estado==='En ejecución' && !o.fecha_inicio) o.fecha_inicio = hoy();
+  var v = unidad(o.interno); if(v && estado==='En ejecución' && v.estado!=='En taller'){ v.estado='En taller'; guardarFila('Vehiculos', v); }
+  guardarFila('OT', o);
+  guardar(['OT','Vehiculos'], function(){ aviso('O.T. '+numero+' → '+estado); fichaOT(otPorNumero(numero)); });
+}
+function reabrirOT(numero){
+  var o = otPorNumero(numero); if(!o) return;
+  if(!confirm('¿Reabrir la O.T. '+numero+'? Vuelve a estado "En ejecución" y se le va a poder cargar de nuevo.\n\nQueda anotado quién la reabrió.')) return;
+  o.estado = 'En ejecución'; o.fecha_cierre = ''; o.cerrada_por = '';
+  o.obs = (o.obs? o.obs+' · ' : '') + 'Reabierta el '+fecha(hoy())+' por '+(S.usuario? S.usuario.nombre : '');
+  guardarFila('OT', o);
+  guardar(['OT'], function(){ aviso('O.T. '+numero+' reabierta'); fichaOT(otPorNumero(numero)); });
 }
 
 function nuevaOT(){
