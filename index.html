@@ -166,6 +166,7 @@ textarea{min-height:64px;resize:vertical}
 .doc .cre b{display:block;font-size:13px}
 .doc .cre span{font-size:11.5px;color:var(--t3)}
 @media(max-width:700px){.marca{width:auto;padding-left:0}.marca span{display:none}main{padding:14px 12px 60px}}
+.avisito{position:fixed;bottom:22px;left:50%;transform:translateX(-50%);background:var(--t1,#1f2328);color:#fff;padding:10px 16px;border-radius:10px;font-size:13px;font-weight:600;box-shadow:0 8px 24px rgba(0,0,0,.25);z-index:9999;max-width:92vw;text-align:center}
 </style>
 </head>
 <body>
@@ -3235,6 +3236,9 @@ function fecha(f){ if(!f) return ''; var m=String(f).match(/^(\d{4})-(\d{2})-(\d
 function dias(desde,hasta){ if(!desde) return 0; var a=new Date(desde+'T00:00:00'), b=hasta?new Date(hasta+'T00:00:00'):new Date();
   return Math.round((b-a)/86400000); }
 function T(h){ return (S.db[h]||[]); }
+/* avisito flotante (el del módulo de almacén vive adentro del iframe, este es el de la app) */
+function aviso(m){ var d=document.createElement('div'); d.className='avisito'; d.textContent=m;
+  document.body.appendChild(d); setTimeout(function(){ d.remove(); },2800); }
 function idNuevo(){ return String(Date.now())+String(Math.floor(Math.random()*1000)); }
 function ico(d){ return '<svg class="ico" viewBox="0 0 24 24">'+d+'</svg>'; }
 var ICO = {
@@ -3285,8 +3289,22 @@ function apiPost(cuerpo, cb, cbErr){
     .catch(function(e){ cbErr && cbErr('No se pudo guardar: '+e.message); });
 }
 
+/* El esquema (columnas de cada hoja) lo necesitan todos los formularios. Se pide al
+   arrancar, pero si esa primera llamada falla (Apps Script arrancando en frío, red)
+   se vuelve a pedir en cada Actualizar y en el momento de abrir un formulario. */
+function pedirEsquema(cb){
+  if(S.esqPidiendo) return;
+  S.esqPidiendo = true;
+  apiGet({accion:'esquema'}, function(j){
+    S.esqPidiendo = false;
+    if(j && j.esquema){ S.esq=j.esquema; S.listas=j.listas||S.listas; pintar(); cb && cb(true); }
+    else cb && cb(false);
+  }, function(err){ S.esqPidiendo = false; cb && cb(false, err); });
+}
+
 function traer(cb){
   S.cargando = true; S.error=''; pintar();
+  if(!S.esq) pedirEsquema();
   apiGet({ accion:'leer' }, function(j){
     S.db = j.datos || {}; S.version = Number(j.version_datos||1); S.planilla = j.planilla||'';
     if(j.permisos) S.permServidor = j.permisos;
@@ -3635,7 +3653,7 @@ function itemNav(id){
 /* --------- marca: todo editable, nada atado a ninguna empresa --------- */
 var MARCA_DEF = { nombre:'Gestión de Flota', bajada:'', acento:'#2b3440' };
 /* Subila cada vez que cambie algo. Se ve arriba a la derecha y en el login. */
-var GF_VERSION = 'v3.3 · 02-09-2026';
+var GF_VERSION = 'v3.5 · 16-09-2026';
 function marcaNombre(){ return (localStorage.getItem('GF_MARCA_NOMBRE')||'').trim() || MARCA_DEF.nombre; }
 function marcaBajada(){ return (localStorage.getItem('GF_MARCA_BAJADA')||'').trim(); }
 function acento(){ return localStorage.getItem(LS.acento) || MARCA_DEF.acento; }
@@ -4224,10 +4242,49 @@ function vistaAppConductor(m){
       ['hora','Hora'],['estado','Estado','chip'],['duracion','Minutos','n'],['hecho_por','Lo hizo']],
       function(f){ formGenerico('Diagramas', f); }));
   } else {
-    carta(m, tabla(T('PinesConductores'), [['dni','DNI','b'],['nombre','Nombre'],['pin','PIN']],
-      function(f){ formGenerico('PinesConductores', f); }));
-    m.appendChild(el('div',{cls:'mini'},'El PIN de la app del conductor vive en esta hoja, igual que hasta ahora.'));
+    vistaPinesConductores(m);
   }
+}
+
+/* PIN de la app del conductor. El PIN NUNCA baja al navegador: la planilla manda
+   solo quién tiene PIN propio, y asignar / sacar va por gf=pin_conductor. */
+function vistaPinesConductores(m){
+  var conPin = {};
+  T('PinesConductores').forEach(function(p){ conPin[String(p.dni||'').replace(/\D/g,'')] = true; });
+  var filas = porEmpresa(T('Conductores')).map(function(c){
+    var o = Object.create(c), d = String(c.dni||'').replace(/\D/g,'');
+    o._dni = d;
+    o._pin = conPin[d] ? 'PIN propio' : (d ? 'Últimos 4 del DNI ('+d.slice(-4)+')' : 'Sin DNI');
+    o._app = conPin[d] ? 'Sí' : 'No';
+    return o;
+  });
+  var mandar = function(c, pin){
+    apiPost({accion:'pin_conductor', dni:c._dni, nombre:c.nombre||'', pin:pin}, function(){
+      S.db.PinesConductores = (S.db.PinesConductores||[]).filter(function(p){ return String(p.dni||'').replace(/\D/g,'')!==c._dni; });
+      if(pin) S.db.PinesConductores.push({dni:c._dni, nombre:c.nombre||'', tiene_pin:'Sí'});
+      aviso(pin ? 'PIN asignado a '+(c.nombre||c._dni) : 'PIN sacado: entra con los últimos 4 del DNI');
+      pintar();
+    }, function(err){ alert(/desconocida/i.test(String(err)) ? 'La planilla tiene el conector viejo: hay que pegar el conector nuevo y publicar Versión NUEVA.' : err); });
+  };
+  var acc = [];
+  if(puede(S.vista,'cargar')){
+    acc.push({ t:'Asignar PIN', ic:'lapiz', cls:'ed', fn:function(c){
+      if(!c._dni){ alert('Ese conductor no tiene DNI cargado. Cargáselo primero en Conductores.'); return; }
+      var p = prompt('PIN nuevo para '+(c.nombre||c._dni)+' (4 a 6 números):', '');
+      if(p===null) return;
+      p = String(p).trim();
+      if(!/^\d{4,6}$/.test(p)){ alert('El PIN tiene que ser de 4 a 6 números.'); return; }
+      mandar(c, p);
+    }});
+    acc.push({ t:'Sacar PIN', ic:'tacho', cls:'bo', fn:function(c){
+      if(!conPin[c._dni]){ alert((c.nombre||c._dni)+' no tiene PIN propio: ya entra con los últimos 4 del DNI.'); return; }
+      if(!confirm('¿Sacar el PIN propio de '+(c.nombre||c._dni)+'?\n\nVa a volver a entrar con los últimos 4 números de su DNI.')) return;
+      mandar(c, '');
+    }});
+  }
+  carta(m, tabla(filas, [['nombre','Conductor','b'],['_dni','DNI'],['_pin','PIN de la app'],['_app','PIN propio','chip']], null, acc));
+  m.appendChild(el('div',{cls:'mini'},'Si un conductor no tiene PIN propio, entra a la app con los últimos 4 números de su DNI. '+
+    'El PIN no se muestra nunca acá: si alguien lo olvidó, asignale uno nuevo. Los conductores se dan de alta en Conductores.'));
 }
 
 /* ------------------------------ BIBLIOTECA --------------------------- */
@@ -6205,8 +6262,21 @@ function campoDe(col, valor, alCambiar){
 function formGenerico(hoja, registro, alTerminar){
   if(!puede(S.vista,'cargar')){ alert('Tu usuario puede mirar este módulo pero no cargar ni editar.'); return; }
   var esq = (S.esq||{})[hoja];
-  if(!esq){ alert('Todavía no se descargó el esquema de la planilla. Apretá Actualizar.'); return; }
-  var obj = {}; (registro? Object.keys(registro):[]).forEach(function(k){ obj[k]=registro[k]; });
+  if(!esq){
+    if(!S.esq){
+      aviso('Descargando la estructura de la planilla…');
+      pedirEsquema(function(ok, err){
+        if(ok) formGenerico(hoja, registro, alTerminar);
+        else { alert('No pude bajar la estructura de la planilla: '+(err||'sin respuesta')+'\n\nProbá de nuevo en unos segundos.'); }
+      });
+      return;
+    }
+    alert('La planilla no tiene la hoja "'+hoja+'". Corré "Crear / reparar la plantilla" desde el menú Gestión de Flota de la planilla.'); return;
+  }
+  /* las tablas pasan la fila "vestida" (Object.create) con columnas calculadas _km, _prox…:
+     hay que copiar también lo heredado (los datos reales) y dejar afuera lo calculado */
+  var obj = {};
+  if(registro){ for(var k in registro){ if(k.charAt(0)!=='_') obj[k]=registro[k]; } }
   var nuevo = !registro || !registro.id;
   var cuerpo = el('div');
   cuerpo.appendChild(el('div',{cls:'mini',style:'margin-bottom:12px'}, esc(esq.desc||'')));
@@ -6899,7 +6969,10 @@ function mapearEncabezados(hoja, encabezados){
 function importarMasivo(hoja, opciones){
   opciones = opciones || {};
   var cols = ((S.esq||{})[hoja]||{cols:[]}).cols;
-  if(!cols.length){ alert('Todavía no bajó el esquema de la planilla. Apretá Actualizar.'); return; }
+  if(!cols.length){
+    if(!S.esq){ aviso('Descargando la estructura de la planilla…'); pedirEsquema(function(ok){ if(ok) importarMasivo(hoja, opciones); else alert('No pude bajar la estructura de la planilla. Probá de nuevo en unos segundos.'); }); return; }
+    alert('La planilla no tiene la hoja "'+hoja+'". Corré "Crear / reparar la plantilla" desde el menú Gestión de Flota de la planilla.'); return;
+  }
   var clave = opciones.clave || CLAVE_HOJA[hoja] || '';
   var estado = { filas:null, mapa:null, listas:null, actualizar:true, avisos:[], corregirKm:false };
 
@@ -7121,7 +7194,7 @@ function arrancar(){
       if(u) T('Usuarios').forEach(function(x){ if(x.usuario===u && x.activo!=='No') S.usuario=x; });
       pintar();
     });
-    apiGet({accion:'esquema'}, function(j){ S.esq=j.esquema; S.listas=j.listas; pintar(); }, function(){});
+    pedirEsquema();
   }
 }
 arrancar();
