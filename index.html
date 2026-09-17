@@ -3279,14 +3279,32 @@ function apiGet(params, cb, cbErr){
     .then(function(j){ if(j && j.ok===false) return cbErr && cbErr(j.error||'La planilla devolvió un error.'); cb(j); })
     .catch(function(e){ cbErr && cbErr('No se pudo hablar con la planilla: '+e.message); });
 }
-function apiPost(cuerpo, cb, cbErr){
+function apiPost(cuerpo, cb, cbErr, intento){
   if(!S.api) return cbErr && cbErr('Falta la dirección del script.');
   cuerpo.gf = cuerpo.accion || 'guardarTodo';   /* rama del sistema nuevo en el conector unificado */
   if(S.token) cuerpo.token = S.token;
+  intento = intento || 1;
   fetch(S.api, { method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'}, body:JSON.stringify(cuerpo) })
-    .then(function(r){ return r.json(); })
-    .then(function(j){ if(j && j.ok===false) return cbErr && cbErr(j.error||'No se pudo guardar.', j); cb(j); })
-    .catch(function(e){ cbErr && cbErr('No se pudo guardar: '+e.message); });
+    .then(function(r){ return r.text(); })
+    .then(function(txt){
+      var j;
+      try { j = JSON.parse(txt); }
+      catch(e){
+        /* Google devolvió una página (HTML) en vez de la respuesta: pasa cuando la planilla
+           está ocupada o el script se cayó. Se reintenta solo, 3 veces, antes de avisar. */
+        if(intento < 3){ setTimeout(function(){ apiPost(cuerpo, cb, cbErr, intento+1); }, 1500*intento); return; }
+        var esHtml = /^\s*</.test(txt||'');
+        return cbErr && cbErr(esHtml
+          ? 'La planilla no respondió bien (Google devolvió una página de error 3 veces seguidas). Probá de nuevo en un minuto; si sigue, en Apps Script mirá "Ejecuciones" para ver el error.'
+          : 'No se pudo guardar: '+e.message);
+      }
+      if(j && j.ok===false) return cbErr && cbErr(j.error||'No se pudo guardar.', j);
+      cb(j);
+    })
+    .catch(function(e){
+      if(intento < 3){ setTimeout(function(){ apiPost(cuerpo, cb, cbErr, intento+1); }, 1500*intento); return; }
+      cbErr && cbErr('No se pudo guardar: '+e.message);
+    });
 }
 
 /* El esquema (columnas de cada hoja) lo necesitan todos los formularios. Se pide al
@@ -3659,7 +3677,7 @@ function itemNav(id){
 /* --------- marca: todo editable, nada atado a ninguna empresa --------- */
 var MARCA_DEF = { nombre:'Gestión de Flota', bajada:'', acento:'#2b3440' };
 /* Subila cada vez que cambie algo. Se ve arriba a la derecha y en el login. */
-var GF_VERSION = 'v3.5.1 · 17-09-2026';
+var GF_VERSION = 'v3.5.2 · 17-09-2026';
 function marcaNombre(){ return (localStorage.getItem('GF_MARCA_NOMBRE')||'').trim() || MARCA_DEF.nombre; }
 function marcaBajada(){ return (localStorage.getItem('GF_MARCA_BAJADA')||'').trim(); }
 function acento(){ return localStorage.getItem(LS.acento) || MARCA_DEF.acento; }
